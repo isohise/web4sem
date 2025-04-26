@@ -2,10 +2,9 @@
 <div class="row">
   <div class="col-lg-12">
     <h1 class="my-5">Задание к лабораторной работе</h1>
-
     {% with messages = get_flashed_messages(with_categories=true) %} {% for
     category, message in messages %}
-    <div class="alert alert-{{ category }}">{{ message }}</div>
+    <div class="alert alert-{{ category }} mt-3">{{ message }}</div>
     {% endfor %} {% endwith %}
     <p class="fw-bold">
       1. Доработайте прилагаемое к заданию веб-приложение, добавив в него шаблон
