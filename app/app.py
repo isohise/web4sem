@@ -135,16 +135,21 @@ login_manager = LoginManager()
 login_manager.login_view = 'login'
 login_manager.init_app(app)
 
+user_visits = {}
+
 class User(UserMixin):
-    def __init__(self, id):
+    def __init__(self, id, name, password):
         self.id = id
-        self.name = "user"
-        self.password = "qwerty"
+        self.name = name
+        self.password = password
 
     def __repr__(self):
         return f"<User: {self.name}>"
 
-users = {"user": User(id=1)}
+users = {
+    "user": User(id=1, name="user", password="qwerty"),
+    "user1": User(id=2, name="user1", password="123")
+}
 
 @login_manager.user_loader
 def load_user(user_id):
@@ -155,12 +160,22 @@ def load_user(user_id):
 
 @app.route('/counter')
 def counter():
-    session.permanent = True
-    if 'visits' in session:
-        session['visits'] += 1
+    if current_user.is_authenticated:
+        username = current_user.name
+        if username not in user_visits:
+            user_visits[username] = 1
+        else:
+            user_visits[username] += 1
+        visits = user_visits[username]
     else:
-        session['visits'] = 1
-    return render_template('counter.html', visits=session['visits'])
+        session.permanent = True
+        if 'visits' not in session:
+            session['visits'] = 1
+        else:
+            session['visits'] += 1
+        visits = session['visits']
+
+    return render_template('counter.html', visits=visits)
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
