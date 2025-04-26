@@ -132,6 +132,8 @@ app.secret_key = 'your-secret-key'
 app.permanent_session_lifetime = timedelta(days=7)
 
 login_manager = LoginManager()
+login_manager.login_message = "Пожалуйста, войдите в систему для доступа к этой странице."
+login_manager.login_message_category = "warning"
 login_manager.login_view = 'login'
 login_manager.init_app(app)
 
