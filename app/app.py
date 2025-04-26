@@ -1,7 +1,9 @@
 import random
 from functools import lru_cache
-from flask import Flask, render_template, abort, Response, request, make_response, redirect, url_for
+from flask import Flask, render_template, abort, Response, request, make_response, redirect, url_for, flash, session
 from faker import Faker
+from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
+from datetime import timedelta
 
 fake = Faker()
 
@@ -124,6 +126,71 @@ def phone_validation():
             formatted_phone = f"{clean_phone[0]}-{clean_phone[1:4]}-{clean_phone[4:7]}-{clean_phone[7:9]}-{clean_phone[9:11]}"
 
     return render_template('phone_validation.html', title='Проверка номера телефона', error=error, formatted_phone=formatted_phone)
+
+# лр 3
+app.secret_key = 'your-secret-key'
+app.permanent_session_lifetime = timedelta(days=7)
+
+login_manager = LoginManager()
+login_manager.login_view = 'login'
+login_manager.init_app(app)
+
+class User(UserMixin):
+    def __init__(self, id):
+        self.id = id
+        self.name = "user"
+        self.password = "qwerty"
+
+    def __repr__(self):
+        return f"<User: {self.name}>"
+
+users = {"user": User(id=1)}
+
+@login_manager.user_loader
+def load_user(user_id):
+    for user in users.values():
+        if str(user.id) == str(user_id):
+            return user
+    return None
+
+@app.route('/counter')
+def counter():
+    session.permanent = True
+    if 'visits' in session:
+        session['visits'] += 1
+    else:
+        session['visits'] = 1
+    return render_template('counter.html', visits=session['visits'])
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+        remember = 'remember' in request.form
+
+        if username in users and users[username].password == password:
+            login_user(users[username], remember=remember)
+            flash("Вы успешно вошли в систему!", "success")
+            next_page = request.args.get('next')
+            return redirect(next_page or url_for('index'))
+        else:
+            flash("Неверный логин или пароль", "danger")
+            return redirect(url_for('login'))
+
+    return render_template('login.html')
+
+@app.route('/logout')
+@login_required
+def logout():
+    logout_user()
+    flash("Вы вышли из системы.", "info")
+    return redirect(url_for('index'))
+
+@app.route('/secret')
+@login_required
+def secret():
+    return render_template('secret.html')
 
 if __name__ == '__main__':
     app.run(debug=True)
