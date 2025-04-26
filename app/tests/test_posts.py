@@ -1,5 +1,8 @@
 import pytest
 from app import app
+import app as app_module
+import re
+
 
 @pytest.fixture
 def client():
@@ -217,3 +220,109 @@ def test_all_new_pages_exist(client):
     for page in pages:
         rv = client.get(page)
         assert rv.status_code == 200
+
+
+# лр 3
+def login(client, username, password, remember=False, follow=True):
+    return client.post('/login', data=dict(
+        username=username,
+        password=password,
+        remember='on' if remember else ''
+    ), follow_redirects=follow)
+
+def logout(client):
+    return client.get('/logout', follow_redirects=True)
+
+# 1. Анонимный счётчик
+def extract_visit_count(html):
+    match = re.search(r'Вы посещали эту страницу.*?<strong>(\d+)</strong>', html)
+    return int(match.group(1)) if match else None
+
+def test_counter_session_for_anonymous(client):
+    with client.session_transaction() as sess:
+        sess.clear()
+
+    res1 = client.get('/counter')
+    html1 = res1.data.decode('utf-8')
+    count1 = extract_visit_count(html1)
+
+    res2 = client.get('/counter')
+    html2 = res2.data.decode('utf-8')
+    count2 = extract_visit_count(html2)
+
+    assert count1 is not None and count2 is not None, f"HTML: {html2}"
+    assert count2 == count1 + 1, f"{count1=} {count2=}"
+
+# 2. Счётчик для авторизованного
+def test_counter_authenticated_user(client):
+    login(client, 'user', 'qwerty')
+    client.get('/counter')
+    client.get('/counter')
+    assert app_module.user_visits['user'] == 2
+    logout(client)
+
+# 3. Успешный вход и сообщение на главной
+def test_successful_login_redirect(client):
+    res = login(client, 'user', 'qwerty')
+    html = res.data.decode('utf-8')
+    assert 'Вы успешно вошли в систему!' in html
+    assert 'Задание к лабораторной работе' in html
+
+# 4. Ошибка при неправильном пароле
+def test_unsuccessful_login(client):
+    res = login(client, 'user', 'wrongpass')
+    html = res.data.decode('utf-8')
+    assert 'Неверный логин или пароль' in html
+    assert 'Вход в систему' in html
+
+# 5. Защищённая страница для залогиненного
+def test_secret_page_authenticated(client):
+    login(client, 'user', 'qwerty')
+    res = client.get('/secret')
+    html = res.data.decode('utf-8')
+    assert 'Секретная страница' in html
+    logout(client)
+
+# 6. Редирект неавторизованного на вход
+def test_secret_page_redirects_anonymous(client):
+    res = client.get('/secret', follow_redirects=True)
+    html = res.data.decode('utf-8')
+    assert 'Пожалуйста, войдите в систему' in html
+    assert 'Вход в систему' in html
+
+# 7. Редирект на секретную после логина
+def test_redirect_to_secret_after_login(client):
+    res = client.get('/secret', follow_redirects=False)
+    assert res.status_code == 302
+    assert '/login?next=%2Fsecret' in res.headers['Location']
+
+    login(client, 'user', 'qwerty')
+    secret_res = client.get('/secret')
+    assert 'Секретная страница' in secret_res.data.decode('utf-8')
+    logout(client)
+
+# 8. remember_token устанавливается
+def test_remember_me_cookie(client):
+    res = client.post('/login', data=dict(
+        username='user',
+        password='qwerty',
+        remember='on'
+    ))
+    cookies = res.headers.getlist("Set-Cookie")
+    assert any('remember_token' in c for c in cookies)
+
+# 9. Навбар для авторизованного
+def test_navbar_for_authenticated(client):
+    login(client, 'user', 'qwerty')
+    res = client.get('/')
+    html = res.data.decode('utf-8')
+    assert 'Выйти' in html
+    assert 'Секретная страница' in html
+    logout(client)
+
+# 10. Навбар для анонимного
+def test_navbar_for_anonymous(client):
+    res = client.get('/')
+    html = res.data.decode('utf-8')
+    assert 'Войти' in html
+    assert 'Секретная страница' not in html
