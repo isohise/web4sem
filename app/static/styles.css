@@ -1,0 +1,146 @@
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-size: 1.25rem;
+  font-family: Arial, sans-serif;
+  line-height: 1.6;
+  margin: 0;
+  padding: 0;
+  background-color: #f4f4f4;
+  display: flex;
+  flex-direction: column;
+}
+main {
+  flex: 1 0 auto;
+}
+
+footer {
+  flex-shrink: 0;
+  background-color: #212529;
+  color: white;
+  text-align: center;
+  padding: 1rem;
+}
+
+h1,
+h2,
+h3 {
+  color: #333;
+}
+
+footer {
+  background-color: #333;
+  color: white;
+  padding: 20px 0;
+  text-align: center;
+  position: relative;
+  bottom: 0;
+  width: 100%;
+}
+
+.post-container {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 20px;
+  background-color: white;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+  border-radius: 8px;
+}
+
+.post-header {
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+.post-meta {
+  font-size: 14px;
+  color: #777;
+}
+
+.post-image img {
+  width: 100%;
+  border-radius: 8px;
+  margin-top: 20px;
+  object-fit: cover;
+  height: 300px;
+}
+
+.post-text {
+  font-size: 16px;
+  color: #444;
+  margin-top: 20px;
+}
+
+.about-section {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.about-section img {
+  width: 150px;
+  height: 150px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.about-section .about-text {
+  flex: 1;
+  font-size: 1rem;
+  color: #444;
+  padding: 10px;
+  line-height: 1.6;
+}
+
+.comment-section {
+  margin-top: 40px;
+}
+
+.comment-form textarea {
+  width: 100%;
+  padding: 10px;
+  font-size: 16px;
+  margin-bottom: 10px;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+}
+
+.comment-form button {
+  padding: 10px 20px;
+  background-color: #5cb85c;
+  color: white;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.comment-form button:hover {
+  background-color: #4cae4c;
+}
+
+.comments-list {
+  margin-top: 30px;
+}
+
+.comment-item {
+  background-color: #f9f9f9;
+  padding: 15px;
+  border-radius: 5px;
+  margin-bottom: 10px;
+}
+
+.comment-replies {
+  margin-left: 20px;
+  margin-top: 10px;
+}
+
+.reply-item {
+  background-color: #f1f1f1;
+  padding: 10px;
+  border-radius: 5px;
+  margin-bottom: 5px;
+}
