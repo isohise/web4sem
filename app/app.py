@@ -1,47 +1,277 @@
 import random
 from functools import lru_cache
-from flask import Flask, render_template, abort, Response, request, make_response, redirect, url_for, flash, session
+from datetime import datetime, timedelta
+import re
+
+from flask import (
+    Flask, render_template, abort, Response,
+    request, make_response, redirect, url_for,
+    flash, session
+)
 from faker import Faker
-from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
-from datetime import timedelta
+from flask_login import (
+    LoginManager, login_user, logout_user,
+    login_required, current_user
+)
 
-fake = Faker()
-
+# === Приложение и конфигурация ===
 app = Flask(__name__)
-application = app
+app.config['SECRET_KEY'] = 'your-secret-key'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.permanent_session_lifetime = timedelta(days=7)
+import os
 
-images_ids = ['7d4e9175-95ea-4c5f-8be5-92a6b708bb3c',
-              '2d2ab7df-cdbc-48a8-a936-35bba702def5',
-              '6e12f3de-d5fd-4ebb-855b-8cbc485278b7',
-              'afc2cfe7-5cac-4b80-9b9a-d5c65ef0c728',
-              'cab5b7f2-774e-4884-a200-0c0180fa777f']
+basedir = os.path.abspath(os.path.dirname(__file__))
+
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(basedir, 'app.db')
+
+print(">>> Using database:", os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "app.db")
+))
+
+# === Инициализация базы данных ===
+from models import db, User, Role
+
+db.init_app(app)
+
+# === Настройка Flask-Login ===
+login_manager = LoginManager(app)
+login_manager.login_view = 'login'
+login_manager.login_message = "Пожалуйста, войдите в систему для доступа к этой странице."
+login_manager.login_message_category = "warning"
+
+@login_manager.user_loader
+def load_user(user_id):
+    return User.query.get(int(user_id))
+
+# === Faker для фейковых постов ===
+fake = Faker()
+images_ids = [
+    '7d4e9175-95ea-4c5f-8be5-92a6b708bb3c',
+    '2d2ab7df-cdbc-48a8-a936-35bba702def5',
+    '6e12f3de-d5fd-4ebb-855b-8cbc485278b7',
+    'afc2cfe7-5cac-4b80-9b9a-d5c65ef0c728',
+    'cab5b7f2-774e-4884-a200-0c0180fa777f'
+]
 
 def generate_comments(replies=True):
     comments = []
     for _ in range(random.randint(1, 3)):
-        comment = { 'author': fake.name(), 'text': fake.text() }
+        c = {'author': fake.name(), 'text': fake.text()}
         if replies:
-            comment['replies'] = generate_comments(replies=False)
-        comments.append(comment)
+            c['replies'] = generate_comments(False)
+        comments.append(c)
     return comments
 
 def generate_post(i):
     return {
-        'title': fake.paragraph(nb_sentences=1),
+        'title': fake.sentence(),
         'text': fake.paragraph(nb_sentences=100),
         'author': fake.name(),
-        'date': fake.date_time_between(start_date='-2y', end_date='now'),
+        'date': fake.date_time_between('-2y', 'now'),
         'image_id': f'{images_ids[i]}.jpg',
         'comments': generate_comments()
     }
 
 @lru_cache
 def posts_list():
-    return sorted([generate_post(i) for i in range(5)], key=lambda p: p['date'], reverse=True)
+    return sorted([generate_post(i) for i in range(5)],
+                  key=lambda p: p['date'], reverse=True)
+
+# === Роуты ===
+
+with app.app_context():
+    db.create_all()
+
+@app.route('/dump')
+def dump_db():
+    rows = []
+    for u in User.query.all():
+        rows.append({
+            'id': u.id,
+            'login': u.login,
+            'ФИО': f"{u.surname} {u.name} {u.patronymic}",
+            'role': u.role.name if u.role else None,
+            'created_at': u.created_at.isoformat()
+        })
+    return {'users': rows}
 
 @app.route('/')
 def index():
-    return render_template('index.html')
+    users = User.query.order_by(User.id).all()
+    return render_template('index.html', users=users)
+
+@app.route('/view_user/<int:user_id>')
+def view_user(user_id):
+    user = User.query.get_or_404(user_id)
+    return render_template('view_user.html', user=user)
+
+@app.route('/create_user', methods=['GET', 'POST'])
+@login_required
+def create_user():
+    roles = Role.query.order_by(Role.name).all()
+    errors = {}
+    form = {}
+
+    if request.method == 'POST':
+        form['login'] = request.form.get('login', '').strip()
+        form['password'] = request.form.get('password', '')
+        form['surname'] = request.form.get('surname', '').strip()
+        form['name'] = request.form.get('name', '').strip()
+        form['patronymic'] = request.form.get('patronymic', '').strip()
+        form['role_id'] = request.form.get('role_id', '')
+
+        if not form['login']:
+            errors['login'] = 'Поле не может быть пустым'
+        elif not re.match(r'^[A-Za-z0-9]{5,}$', form['login']):
+            errors['login'] = 'Логин должен состоять из латинских букв и цифр, минимум 5 символов'
+
+        pwd = form['password']
+        if not pwd:
+            errors['password'] = 'Поле не может быть пустым'
+        else:
+            if len(pwd) < 8 or len(pwd) > 128:
+                errors['password'] = 'Пароль должен быть от 8 до 128 символов'
+            elif not re.search(r'[A-Z]', pwd) or not re.search(r'[a-z]', pwd):
+                errors['password'] = 'Пароль должен содержать и заглавные, и строчные буквы'
+            elif not re.search(r'\d', pwd):
+                errors['password'] = 'Пароль должен содержать хотя бы одну цифру'
+            elif ' ' in pwd:
+                errors['password'] = 'Пароль не должен содержать пробелов'
+            elif not re.match(r'^[A-Za-zА-Яа-я0-9~!?@#$%^&*_\-+()\[\]{}><\\|"\'.:,]+$', pwd):
+                errors['password'] = 'Пароль содержит недопустимые символы'
+
+        if not form['surname']:
+            errors['surname'] = 'Поле не может быть пустым'
+        if not form['name']:
+            errors['name'] = 'Поле не может быть пустым'
+
+        role = None
+        if form['role_id']:
+            role = Role.query.get(int(form['role_id']))
+            if not role:
+                errors['role'] = 'Выбранная роль недействительна'
+
+        if errors:
+            return render_template('create_user.html', roles=roles, errors=errors, form=form)
+
+        new_user = User(
+            login=form['login'], surname=form['surname'],
+            name=form['name'], patronymic=form['patronymic'], role=role
+        )
+        new_user.set_password(form['password'])
+        db.session.add(new_user)
+        try:
+            db.session.commit()
+            flash('Пользователь успешно создан', 'success')
+            return redirect(url_for('index'))
+        except Exception as e:
+            db.session.rollback()
+            flash('Ошибка при создании пользователя: ' + str(e), 'danger')
+            return render_template('create_user.html', roles=roles, errors=errors, form=form)
+
+    return render_template('create_user.html', roles=roles, errors=errors, form=form)
+
+@app.route('/edit_user/<int:user_id>', methods=['GET', 'POST'])
+@login_required
+def edit_user(user_id):
+    user = User.query.get_or_404(user_id)
+    roles = Role.query.order_by(Role.name).all()
+    errors = {}
+    form = {}
+
+    if request.method == 'POST':
+        form['surname'] = request.form.get('surname', '').strip()
+        form['name'] = request.form.get('name', '').strip()
+        form['patronymic'] = request.form.get('patronymic', '').strip()
+        form['role_id'] = request.form.get('role_id', '')
+
+        if not form['surname']:
+            errors['surname'] = 'Поле не может быть пустым'
+        if not form['name']:
+            errors['name'] = 'Поле не может быть пустым'
+        role = None
+        if form['role_id']:
+            role = Role.query.get(int(form['role_id']))
+            if not role:
+                errors['role'] = 'Выбранная роль недействительна'
+
+        if errors:
+            return render_template('edit_user.html', user=user, roles=roles, errors=errors)
+
+        user.surname = form['surname']
+        user.name = form['name']
+        user.patronymic = form['patronymic']
+        user.role = role
+        try:
+            db.session.commit()
+            flash('Пользователь успешно обновлён', 'success')
+            return redirect(url_for('index'))
+        except Exception as e:
+            db.session.rollback()
+            flash('Ошибка при обновлении пользователя: ' + str(e), 'danger')
+            return render_template('edit_user.html', user=user, roles=roles, errors=errors)
+
+    return render_template('edit_user.html', user=user, roles=roles, errors=errors)
+
+@app.route('/delete_user/<int:user_id>', methods=['POST'])
+@login_required
+def delete_user(user_id):
+    user = User.query.get_or_404(user_id)
+    try:
+        db.session.delete(user)
+        db.session.commit()
+        flash('Пользователь "{} {} {}" успешно удалён'.format(
+            user.surname or '', user.name or '', user.patronymic or ''
+        ), 'success')
+    except Exception as e:
+        db.session.rollback()
+        flash('Ошибка при удалении пользователя: ' + str(e), 'danger')
+    return redirect(url_for('index'))
+
+@app.route('/change_password', methods=['GET', 'POST'])
+@login_required
+def change_password():
+    errors = {}
+    if request.method == 'POST':
+        old = request.form.get('old_password', '')
+        new = request.form.get('new_password', '')
+        confirm = request.form.get('confirm_password', '')
+
+        if not current_user.check_password(old):
+            errors['old_password'] = 'Неверный старый пароль'
+
+        if not new:
+            errors['new_password'] = 'Поле не может быть пустым'
+        else:
+            if len(new) < 8 or len(new) > 128:
+                errors['new_password'] = 'Пароль должен быть от 8 до 128 символов'
+            elif not re.search(r'[A-Z]', new) or not re.search(r'[a-z]', new):
+                errors['new_password'] = 'Пароль должен содержать и заглавные, и строчные буквы'
+            elif not re.search(r'\d', new):
+                errors['new_password'] = 'Пароль должен содержать хотя бы одну цифру'
+            elif ' ' in new:
+                errors['new_password'] = 'Пароль не должен содержать пробелов'
+            elif not re.match(r'^[A-Za-zА-Яа-я0-9~!?@#$%^&*\_\-+()\[\]{}><\\|"\'.:,]+$', new):
+                errors['new_password'] = 'Пароль содержит недопустимые символы'
+
+        if new != confirm:
+            errors['confirm_password'] = 'Пароли не совпадают'
+
+        if errors:
+            return render_template('change_password.html', errors=errors)
+
+        current_user.set_password(new)
+        try:
+            db.session.commit()
+            flash('Пароль успешно изменён', 'success')
+            return redirect(url_for('index'))
+        except Exception as e:
+            db.session.rollback()
+            flash('Ошибка при смене пароля: ' + str(e), 'danger')
+            return render_template('change_password.html', errors=errors)
+
+    return render_template('change_password.html', errors={})
 
 @app.route('/posts')
 def posts():
@@ -49,10 +279,10 @@ def posts():
 
 @app.route('/posts/<int:index>')
 def post(index):
-    if index >= len(posts_list())-1 or index < 0:
+    if index < 0 or index >= len(posts_list()):
         abort(404)
-    p = posts_list()[index]
-    return render_template('post.html', title=p['title'], post=p)
+    return render_template('post.html', title=posts_list()[index]['title'],
+                           post=posts_list()[index])
 
 @app.route('/about')
 def about():
@@ -62,146 +292,74 @@ def about():
 def page_not_found(e):
     return Response('404 Not Found', status=404)
 
-# Параметры URL
 @app.route('/url-params')
 def url_params():
-    params = request.args 
-    return render_template('url_params.html', title='Параметры URL', params=params)
+    return render_template('url_params.html', title='Параметры URL',
+                           params=request.args)
 
-# Заголовки запроса
 @app.route('/headers')
 def headers():
-    headers = dict(request.headers)
-    return render_template('headers.html', title='Заголовки запроса', headers=headers)
+    return render_template('headers.html', title='Заголовки запроса',
+                           headers=dict(request.headers))
 
-# Cookie
 @app.route('/cookies', methods=['GET', 'POST'])
 def cookies():
     resp = make_response()
-    cookie_name = 'my_cookie'
-
+    name = 'my_cookie'
     if request.method == 'POST':
         action = request.form.get('action')
+        resp = make_response(redirect(url_for('cookies')))
         if action == 'set':
-            resp = make_response(redirect(url_for('cookies')))
-            resp.set_cookie(cookie_name, 'cookie_value', max_age=60*60*24)
-            return resp
-        elif action == 'delete':
-            resp = make_response(redirect(url_for('cookies')))
-            resp.delete_cookie(cookie_name)
-            return resp
-
-    cookie_set = request.cookies.get(cookie_name)
+            resp.set_cookie(name, 'cookie_value', max_age=86400)
+        else:
+            resp.delete_cookie(name)
+        return resp
+    cookie_set = request.cookies.get(name)
     message = "Cookie установлено." if cookie_set else "Cookie не установлено."
-    return render_template('cookies.html', title='Cookie', message=message, cookie_set=cookie_set)
+    return render_template('cookies.html', title='Cookie',
+                           message=message, cookie_set=cookie_set)
 
-# Параметры формы
 @app.route('/form_params', methods=['GET', 'POST'])
 def form_params():
-    form_data = {}
-    if request.method == 'POST':
-        form_data = request.form
-    return render_template('form_params.html', title='Параметры формы', form_data=form_data)
-
-# Проверка номера телефона
-import re
+    data = request.form if request.method == 'POST' else {}
+    return render_template('form_params.html', title='Параметры формы',
+                           form_data=data)
 
 @app.route('/phone_validation', methods=['GET', 'POST'])
 def phone_validation():
-    error = None
-    formatted_phone = None
-
+    error = formatted = None
     if request.method == 'POST':
         phone = request.form.get('phone', '')
-
-        clean_phone = re.sub(r"[^\d]", "", phone)
-
-        if not clean_phone.isdigit():
-            error = "Недопустимый ввод. В номере телефона встречаются недопустимые символы."
-        elif not (10 <= len(clean_phone) <= 11):
-            error = "Недопустимый ввод. Неверное количество цифр."
+        clean = re.sub(r"[^\d]", "", phone)
+        if not clean.isdigit():
+            error = "Недопустимые символы."
+        elif not (10 <= len(clean) <= 11):
+            error = "Неверное количество цифр."
         else:
-            if clean_phone.startswith('8') or clean_phone.startswith('7'):
-                clean_phone = '8' + clean_phone[-10:]
-            formatted_phone = f"{clean_phone[0]}-{clean_phone[1:4]}-{clean_phone[4:7]}-{clean_phone[7:9]}-{clean_phone[9:11]}"
-
-    return render_template('phone_validation.html', title='Проверка номера телефона', error=error, formatted_phone=formatted_phone)
-
-# лр 3
-app.secret_key = 'your-secret-key'
-app.permanent_session_lifetime = timedelta(days=7)
-
-login_manager = LoginManager()
-login_manager.login_message = "Пожалуйста, войдите в систему для доступа к этой странице."
-login_manager.login_message_category = "warning"
-login_manager.login_view = 'login'
-login_manager.init_app(app)
-
-user_visits = {}
-
-class User(UserMixin):
-    def __init__(self, id, name, password):
-        self.id = id
-        self.name = name
-        self.password = password
-
-    def __repr__(self):
-        return f"<User: {self.name}>"
-
-users = {
-    "user": User(id=1, name="user", password="qwerty"),
-    "user1": User(id=2, name="user1", password="123")
-}
-
-@login_manager.user_loader
-def load_user(user_id):
-    for user in users.values():
-        if str(user.id) == str(user_id):
-            return user
-    return None
-
-@app.route('/counter')
-def counter():
-    if current_user.is_authenticated:
-        username = current_user.name
-        if username not in user_visits:
-            user_visits[username] = 1
-        else:
-            user_visits[username] += 1
-        visits = user_visits[username]
-    else:
-        session.permanent = True
-        if 'visits' not in session:
-            session['visits'] = 1
-        else:
-            session['visits'] += 1
-        visits = session['visits']
-
-    return render_template('counter.html', visits=visits)
+            if clean.startswith(('7','8')):
+                clean = '8' + clean[-10:]
+            formatted = f"{clean[0]}-{clean[1:4]}-{clean[4:7]}-{clean[7:9]}-{clean[9:11]}"
+    return render_template('phone_validation.html', title='Проверка телефона',
+                           error=error, formatted_phone=formatted)
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
-        username = request.form['username']
-        password = request.form['password']
-        remember = 'remember' in request.form
-
-        if username in users and users[username].password == password:
-            login_user(users[username], remember=remember)
-            flash("Вы успешно вошли в систему!", "success")
-            next_page = request.args.get('next')
-            return redirect(next_page or url_for('index'))
-        else:
-            flash("Неверный логин или пароль", "danger")
-            return redirect(url_for('login'))
-
+        login_ = request.form['username']
+        pwd = request.form['password']
+        user = User.query.filter_by(login=login_).first()
+        if user and user.check_password(pwd):
+            login_user(user, remember='remember' in request.form)
+            flash("Успешный вход", "success")
+            return redirect(request.args.get('next') or url_for('index'))
+        flash("Неверный логин или пароль", "danger")
     return render_template('login.html')
 
 @app.route('/logout')
 @login_required
 def logout():
     logout_user()
-    flash("Вы вышли из системы.", "info")
+    flash("Вы вышли", "info")
     return redirect(url_for('index'))
 
 @app.route('/secret')
@@ -209,5 +367,24 @@ def logout():
 def secret():
     return render_template('secret.html')
 
+user_visits = {}
+
+@app.route('/counter')
+def counter():
+    if current_user.is_authenticated:
+        username = current_user.name
+        user_visits[username] = user_visits.get(username, 0) + 1
+        visits = user_visits[username]
+    else:
+        session.permanent = True
+        session['visits'] = session.get('visits', 0) + 1
+        visits = session['visits']
+    return render_template('counter.html', visits=visits)
+
+print(app.url_map)
+
+# === Запуск приложения ===
 if __name__ == '__main__':
+    with app.app_context():
+        db.create_all()
     app.run(debug=True)
