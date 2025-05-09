@@ -1,5 +1,5 @@
 import random
-from functools import lru_cache
+from functools import lru_cache, wraps
 from datetime import datetime, timedelta
 import re
 
@@ -73,6 +73,25 @@ def generate_post(i):
         'comments': generate_comments()
     }
 
+def check_rights(allowed_roles, own_allowed=False):
+
+    def decorator(f):
+        @wraps(f)
+        def wrapper(*args, **kwargs):
+            if not current_user.is_authenticated:
+                return login_manager.unauthorized()
+            role = current_user.role.name if current_user.role else None
+            # админ или нужная роль
+            if role == 'Administrator' or role in allowed_roles:
+                return f(*args, **kwargs)
+            # разрешаем над собой
+            if own_allowed and kwargs.get('user_id') == current_user.id:
+                return f(*args, **kwargs)
+            flash("У вас недостаточно прав для доступа к данной странице.", "warning")
+            return redirect(url_for('index'))
+        return wrapper
+    return decorator
+
 @lru_cache
 def posts_list():
     return sorted([generate_post(i) for i in range(5)],
@@ -102,12 +121,15 @@ def index():
     return render_template('index.html', users=users)
 
 @app.route('/view_user/<int:user_id>')
+@login_required
+@check_rights(['User'], own_allowed=True)
 def view_user(user_id):
     user = User.query.get_or_404(user_id)
     return render_template('view_user.html', user=user)
 
 @app.route('/create_user', methods=['GET', 'POST'])
 @login_required
+@check_rights(['Administrator'])
 def create_user():
     roles = Role.query.order_by(Role.name).all()
     errors = {}
@@ -174,6 +196,7 @@ def create_user():
 
 @app.route('/edit_user/<int:user_id>', methods=['GET', 'POST'])
 @login_required
+@check_rights(['User'], own_allowed=True)
 def edit_user(user_id):
     user = User.query.get_or_404(user_id)
     roles = Role.query.order_by(Role.name).all()
@@ -216,6 +239,7 @@ def edit_user(user_id):
 
 @app.route('/delete_user/<int:user_id>', methods=['POST'])
 @login_required
+@check_rights(['User'], own_allowed=True)
 def delete_user(user_id):
     user = User.query.get_or_404(user_id)
     try:

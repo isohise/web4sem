@@ -39,14 +39,18 @@
            value="{{ form.patronymic or '' }}">
   </div>
 
+  {% if current_user.is_authenticated and current_user.role and current_user.role.name == 'Administrator' %}
   <div class="mb-3">
     <label for="role_id" class="form-label">Роль</label>
     <select name="role_id" id="role_id" class="form-select{% if errors.role %} is-invalid{% endif %}">
       <option value="">Без роли</option>
       {% for role in roles %}
-      <option value="{{ role.id }}" {% if form.role_id == role.id|string %}selected{% endif %}>{{ role.name }}</option>
+        <option value="{{ role.id }}" {% if form.role_id == role.id|string %}selected{% endif %}>
+          {{ role.name }}
+        </option>
       {% endfor %}
     </select>
     {% if errors.role %}<div class="invalid-feedback">{{ errors.role }}</div>{% endif %}
   </div>
+{% endif %}
 {% endmacro %}
