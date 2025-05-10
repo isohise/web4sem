@@ -1,6 +1,7 @@
 import random
 from functools import lru_cache, wraps
 from datetime import datetime, timedelta
+from flask import request
 import re
 
 from flask import (
@@ -30,7 +31,7 @@ print(">>> Using database:", os.path.abspath(
 ))
 
 # === Инициализация базы данных ===
-from models import db, User, Role
+from models import db, User, Role, VisitLog
 
 db.init_app(app)
 
@@ -44,6 +45,7 @@ login_manager.login_message_category = "warning"
 def load_user(user_id):
     return User.query.get(int(user_id))
 
+    
 # === Faker для фейковых постов ===
 fake = Faker()
 images_ids = [
@@ -101,6 +103,8 @@ def posts_list():
 
 with app.app_context():
     db.create_all()
+
+
 
 @app.route('/dump')
 def dump_db():
@@ -391,6 +395,22 @@ def logout():
 def secret():
     return render_template('secret.html')
 
+@app.route('/visit_logs')
+@login_required
+def visit_logs():
+    # страница из ?page=
+    page = request.args.get('page', 1, type=int)
+    per_page = 5
+
+    # общий запрос
+    query = VisitLog.query.order_by(VisitLog.created_at.desc())
+    # если не админ — только свои логи
+    if not (current_user.role and current_user.role.name == 'Administrator'):
+        query = query.filter(VisitLog.user_id == current_user.id)
+
+    pagination = query.paginate(page=page, per_page=per_page, error_out=False)
+    return render_template('visit_logs.html', pagination=pagination)
+
 user_visits = {}
 
 @app.route('/counter')
@@ -405,10 +425,25 @@ def counter():
         visits = session['visits']
     return render_template('counter.html', visits=visits)
 
+@app.after_request
+def log_visit(response):
+    # не логируем статику и сам журнал
+    if request.endpoint not in ('static',) and not request.path.startswith('/visit_logs'):
+        visit = VisitLog(
+            path=request.path,
+            user_id=current_user.id if current_user.is_authenticated else None
+        )
+        db.session.add(visit)
+        db.session.commit()
+    return response
+
 print(app.url_map)
 
 # === Запуск приложения ===
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()
+        # Регистрация Blueprint-а делаем здесь, чтобы избежать циклического импорта
+        import visit_logs
+        app.register_blueprint(visit_logs.visit_logs_bp, url_prefix='/visit_logs')
     app.run(debug=True)
